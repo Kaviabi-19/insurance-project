@@ -1,65 +1,88 @@
-node{
-    
-    def mavenHome
-    def mavenCMD
-    def docker
-    def dockerCMD
-    def tagName
-    
-    stage('prepare enviroment'){
-        echo 'initialize all the variables'
-        mavenHome = tool name: 'maven' , type: 'maven'
-        mavenCMD = "${mavenHome}/bin/mvn"
-        docker = tool name: 'docker' , type: 'org.jenkinsci.plugins.docker.commons.tools.DockerTool'
-        dockerCMD = "${docker}/bin/docker"
-        tagName="3.0"
+pipeline {
+    agent { label 'slave1'} 
+
+    environment {
+        MAVEN_HOME = tool name: 'Maven 3.8.7', type: 'maven'
+        DOCKER_HOME = tool name: 'docker', type: 'org.jenkinsci.plugins.docker.commons.tools.DockerTool'
+        TAG_NAME = "3.0"
     }
-    
-    stage('git code checkout'){
-        try{
-            echo 'checkout the code from git repository'
-            git 'https://github.com/shubhamkushwah123/star-agile-insurance-project.git'
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                echo 'Checking out code from GitHub...'
+                git 'https://github.com/Kaviabi-19/insurance-project.git'
+            }
         }
-        catch(Exception e){
-            echo 'Exception occured in Git Code Checkout Stage'
-            currentBuild.result = "FAILURE"
-            emailext body: '''Dear All,
-            The Jenkins job ${JOB_NAME} has been failed. Request you to please have a look at it immediately by clicking on the below link. 
-            ${BUILD_URL}''', subject: 'Job ${JOB_NAME} ${BUILD_NUMBER} is failed', to: 'shubham@gmail.com'
+
+        stage('Build Application') {
+            steps {
+                echo "Building with Maven..."
+                sh "${MAVEN_HOME}/bin/mvn clean package"
+            }
         }
-    }
-    
-    stage('Build the Application'){
-        echo "Cleaning... Compiling...Testing... Packaging..."
-        //sh 'mvn clean package'
-        sh "${mavenCMD} clean package"        
-    }
-    
-    stage('publish test reports'){
-        publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '/var/lib/jenkins/workspace/Capstone-Project-Live-Demo/target/surefire-reports', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: '', useWrapperFileDirectly: true])
-    }
-    
-    stage('Containerize the application'){
-        echo 'Creating Docker image'
-        sh "${dockerCMD} build -t shubhamkushwah123/insure-me:${tagName} ."
-    }
-    
-    stage('Pushing it ot the DockerHub'){
-        echo 'Pushing the docker image to DockerHub'
-        withCredentials([string(credentialsId: 'dock-password', variable: 'dockerHubPassword')]) {
-        sh "${dockerCMD} login -u shubhamkushwah123 -p ${dockerHubPassword}"
-        sh "${dockerCMD} push shubhamkushwah123/insure-me:${tagName}"
-            
+
+        stage('Publish Test Reports') {
+            steps {
+                echo "Publishing test reports..."
+                publishHTML([
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: 'target/surefire-reports',
+                    reportFiles: 'index.html',
+                    reportName: 'HTML Report'
+                ])
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo "Creating Docker image..."
+                sh "${DOCKER_HOME}/docker build -t kavipriyabai/insure-me:${TAG_NAME} ."
+            }
+        }
+
+        stage('Push to DockerHub') {
+            steps {
+                echo "Pushing Docker image to DockerHub..."
+                withCredentials([usernamePassword(credentialsId: 'dockerloginPAT', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                    sh "docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD"
+                    sh "docker push kavipriyabai/insure-me:${TAG_NAME}"
+                    
+                }
+            }
         }
         
-    stage('Configure and Deploy to the test-server'){
-        ansiblePlaybook become: true, credentialsId: 'ansible-key', disableHostKeyChecking: true, installation: 'ansible', inventory: '/etc/ansible/hosts', playbook: 'ansible-playbook.yml'
+        stage('Deploy to Test Server') {
+            agent { label 'slave1' } 
+            steps {
+                echo "Deploying to test server using Ansible..."
+                ansiblePlaybook(
+                    playbook: 'ansible-playbook.yml',
+                    inventory: 'ansible/hosts',
+                    credentialsId: 'ansible-key',
+                    become: true,
+                    disableHostKeyChecking: true,
+                    installation: 'ansible'   
+                )
+            }
+        }
     }
-        
-        
+
+    post {
+        failure {
+            emailext(
+                to: 'kavipriyabai388@gmail.com',
+                subject: "Job '${JOB_NAME}' #${BUILD_NUMBER} Failed",
+                body: """
+                Dear All,<br><br>
+                The Jenkins job <b>${JOB_NAME}</b> has failed.<br>
+                <a href="${BUILD_URL}">Click here to view the job</a><br><br>
+                Regards,<br>Jenkins
+                """,
+                mimeType: 'text/html'
+            )
+        }
     }
 }
-
-
-
-
